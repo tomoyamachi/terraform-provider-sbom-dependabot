@@ -34,7 +34,7 @@ jq -n \
     sha: $sha,
     ref: $ref,
     job: {correlator: $correlator, id: $jobId},
-    detector: {name: "tflock2cdx", version: "0.1", url: "https://github.com/tomoyamachi/ymc-terraform-sbom"},
+    detector: {name: "tflock2cdx", version: "0.1", url: "https://github.com/tomoyamachi/terraform-provider-sbom-dependabot"},
     scanned: $now,
     manifests: {
       ($manifestPath): {

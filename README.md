@@ -1,4 +1,4 @@
-# ymc-terraform-sbom
+# terraform-provider-sbom-dependabot
 
 Terraform コードから Provider / Module の依存関係を SBOM として出力できるかの検証リポジトリ。
 
