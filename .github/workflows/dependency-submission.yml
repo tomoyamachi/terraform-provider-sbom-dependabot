@@ -1,0 +1,47 @@
+# Terraform Provider / Module の依存を GitHub Dependency graph に送信する検証ワークフロー
+name: dependency-submission
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      manifestPath:
+        description: "snapshot の manifest 名 (Dependency graph 上の表示パス)"
+        default: sample/sbom.cdx.json
+        type: string
+
+permissions:
+  contents: write # dependency-graph/snapshots の POST に必要
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      # Provider のバージョンはロックファイルから読めるため init は不要。モジュールだけ取得する
+      - name: Fetch modules
+        run: terraform -chdir=sample get
+      - name: Generate CycloneDX SBOM
+        run: scripts/tflock2cdx.sh sample > sbom.cdx.json
+      # manifest 名に実在の .terraform.lock.hcl を使うと GitHub 側で依存 0 件に固定されたため、
+      # 既定では生成 SBOM のパスを manifest 名にする (README 参照)
+      - name: Convert to dependency snapshot
+        env:
+          CORRELATOR: ${{ github.workflow }}_${{ github.job }}
+        run: scripts/cdx2ghsnapshot.sh sbom.cdx.json "${{ inputs.manifestPath || 'sample/sbom.cdx.json' }}" > snapshot.json
+      - name: Submit snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat snapshot.json
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/dependency-graph/snapshots" --input snapshot.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.cdx.json
+            snapshot.json

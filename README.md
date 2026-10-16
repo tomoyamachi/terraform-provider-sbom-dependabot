@@ -8,6 +8,7 @@ Terraform コードから Provider / Module の依存関係を SBOM として出
 |---|---|
 | Terraform | v1.16.3 (darwin_arm64) |
 | Trivy | v0.76.0 |
+| Syft | v1.54.1 |
 
 ## 検証対象
 
@@ -18,6 +19,12 @@ Terraform コードから Provider / Module の依存関係を SBOM として出
 
 ## 結論
 
+- Trivy / Syft いずれも単体では `.terraform.lock.hcl` の Provider を GitHub 連携可能な SBOM にできない (Trivy は非検出、Syft は検出するが purl 無し)
+- 自前生成した CycloneDX (`scripts/tflock2cdx.sh`) を Dependency submission API に送れば Dependency graph に Provider / Module が表示され、`pkg:golang` purl なら Dependabot alerts も機能する
+- ただし manifest 名に実在の `.terraform.lock.hcl` を使うと依存 0 件に固定される挙動を観測。ワークフローでは生成 SBOM のパスを manifest 名にしている
+
+### Trivy
+
 **Trivy 単体では `.terraform.lock.hcl` から Provider 依存を SBOM に出力できない。**
 
 | 方法 | 結果 | 備考 |
@@ -27,7 +34,7 @@ Terraform コードから Provider / Module の依存関係を SBOM として出
 | `trivy rootfs sample/.terraform/providers` | △ Go バイナリとして検出 | Provider 自身の Go 内部依存 (stdlib, x/net 等) は取れるが、Provider のバージョンは `(devel)`/null で取れない |
 | `scripts/tflock2cdx.sh` + `trivy sbom` | ○ 迂回策 | ロックファイルから自前で CycloneDX を生成すれば Trivy は読み込める |
 
-### 詳細
+#### 詳細
 
 1. **`trivy fs` は Terraform ロックファイルを依存として認識しない。**
    Trivy の言語サポート一覧 (Go, Node.js, Python, …) に Terraform は含まれず、Terraform はあくまで misconfig スキャンの対象。
@@ -54,7 +61,72 @@ scripts/tflock2cdx.sh sample > sample/sbom.cdx.json
 trivy sbom sample/sbom.cdx.json
 ```
 
+### Syft
+
+**Syft は `.terraform.lock.hcl` の Provider を検出するが purl を付けないため、GitHub 連携にはそのまま使えない。**
+
+| 方法 | 結果 | 備考 |
+|---|---|---|
+| `syft scan dir:sample -o table` | ○ Provider 4 件検出 | `terraform-lock-cataloger` が解析。name `registry.terraform.io/hashicorp/aws`、version `5.100.0`、type `terraform` |
+| `-o cyclonedx-json` / `-o spdx-json` | △ purl 無し | CycloneDX は `purl: null`、SPDX は CPE (`cpe:2.3:a:hashicorp:aws:5.100.0`) のみ |
+| `-o github-json` | ✗ `resolved` が空 | purl の無いパッケージは出力されず manifest 名だけ残る。送信しても依存 0 件 |
+| Registry モジュール | ✗ 非検出 | `.terraform/modules/modules.json` を読む cataloger は無い |
+| `.terraform/providers/` 配下 | △ Go バイナリとして検出 | Trivy rootfs と同様に Provider 内包の Go モジュール (462 件) が出る。`--exclude './.terraform/**'` で除外可 |
+
+purl が無いのは意図的で、`syft/pkg/cataloger/terraform/parse_tf_lock.go` に
+「purl-spec に terraform 型が定義されるまで PURL を省略する」旨の TODO がある
+([package-url/purl-spec#369](https://github.com/package-url/purl-spec/issues/369))。
+なお `.terraform/modules/` 配下に Registry モジュールの `.github/workflows` が含まれると、github-action として拾われるノイズが出る。
+
+```sh
+syft scan dir:sample --exclude './.terraform/**' -o cyclonedx-json=syft.cdx.json -o github-json=syft.github.json
+```
+
+### GitHub Dependency submission API
+
+**自前 SBOM を snapshot 形式に変換して送れば Dependency graph に表示でき、`pkg:golang` purl なら Dependabot alerts も機能する。**
+
+- エンドポイントは `POST /repos/{owner}/{repo}/dependency-graph/snapshots`。
+  `gh api` + OAuth トークン (`repo` スコープ) で送信できる。
+- private リポジトリは先に `PUT /repos/{owner}/{repo}/vulnerability-alerts` で Dependency graph と Dependabot alerts を有効化する。
+- 変換は `scripts/cdx2ghsnapshot.sh`、送信は `.github/workflows/dependency-submission.yml` (main への push で `GITHUB_TOKEN` を使って送信)。
+  Provider のバージョンはロックファイルから読めるため `terraform init` は不要で、モジュール取得の `terraform get` だけ行う。
+
+| purl の表現 | Dependency graph | Dependabot alerts |
+|---|---|---|
+| `pkg:golang/github.com/hashicorp/terraform-provider-aws@v5.100.0` | ○ ecosystem `GO` として表示 | ○ `v1.13.0` を送ると GHSA-r48h-jr2j-9g78 が open になり、取り除くと fixed になる |
+| `pkg:terraform/hashicorp/aws@5.100.0` (独自型) | △ ecosystem `UNKNOWN`、名前とバージョンは表示される | ✗ 照合されない |
+| `pkg:generic/registry.terraform.io%2F...%2Fvpc%2Faws@5.16.0` (モジュール) | △ ecosystem `UNKNOWN` | ✗ |
+| Syft `github-json` | ✗ 依存 0 件 | ✗ |
+
+GHSA の Go エコシステムに登録された `terraform-provider-*` のアドバイザリは少数
+(aws は `< 1.14.0` の 1 件のみ、cloudflare / random / null は 0 件) なので、Provider 自体の脆弱性検知としての実効性は限定的。
+内包する Go モジュールの脆弱性を見たい場合は Trivy rootfs / Syft の Go バイナリ解析を併用する。
+
+snapshot の挙動として観測したもの:
+
+- 同じ `job.correlator` + `job.id` で新しい `scanned` を送ると置き換わる。
+- 異なる `job.correlator` から同じ manifest 名に送ると依存は和集合になる。
+- `manifests: {}` を送っても既存 manifest は消えない。消すには元の correlator から `resolved: {}` を送る (manifest は 0 件として残り、alerts は fixed になる)。
+- **リポジトリに実在する `sample/.terraform.lock.hcl` を manifest 名にすると依存が常に 0 件に固定された。**
+  存在しないパスや `README.md`、`sample/main.tf` を manifest 名にした場合は正常に表示される。
+  GitHub の [対応エコシステム表](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/dependency-graph-supported-package-ecosystems)
+  には OpenTofu (`.terraform.lock.hcl`) が community 維持として載っており、ネイティブ解析がこのパスを占有していると推測される
+  (private リポジトリでは compare API が使えず直接確認はできていない)。
+- Dependency graph に表示されるのはデフォルトブランチの snapshot のみ。
+
+取り込み結果の確認方法:
+
+```sh
+# GraphQL (hawkgirl preview) で manifest ごとの依存を見る
+gh api graphql -H 'Accept: application/vnd.github.hawkgirl-preview+json' -f query='{ repository(owner:"OWNER", name:"REPO") { dependencyGraphManifests(first:20) { nodes { filename dependenciesCount dependencies(first:20){ nodes { packageName requirements packageManager } } } } } }'
+# Dependency graph 全体を SPDX でエクスポート
+gh api repos/OWNER/REPO/dependency-graph/sbom
+# Dependabot alerts
+gh api repos/OWNER/REPO/dependabot/alerts
+```
+
 ## 補足
 
 - Terraform 公式にも Provider SBOM を出力する機能はない。`terraform version -json` / `terraform providers` が唯一の機械可読な出力。
-- Syft (anchore) は `.terraform.lock.hcl` 用 cataloger を持つため、Trivy 以外の選択肢として比較候補になる (本検証では未インストールのため未確認)。
+- purl-spec に `terraform` 型が定義されれば Syft の purl 出力と GitHub 側のエコシステム認識が揃う可能性があるが、現時点では `pkg:golang` で Go モジュールとして扱わせるのが唯一 Dependabot と連動する表現。
