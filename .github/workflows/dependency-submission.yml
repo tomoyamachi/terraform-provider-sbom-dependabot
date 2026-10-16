@@ -8,7 +8,7 @@ on:
     inputs:
       manifestPath:
         description: "snapshot の manifest 名 (Dependency graph 上の表示パス)"
-        default: sample/sbom.cdx.json
+        default: sample/.terraform.lock.hcl
         type: string
 
 permissions:
@@ -27,12 +27,11 @@ jobs:
         run: terraform -chdir=sample get
       - name: Generate CycloneDX SBOM
         run: scripts/tflock2cdx.sh sample > sbom.cdx.json
-      # manifest 名に実在の .terraform.lock.hcl を使うと GitHub 側で依存 0 件に固定されたため、
-      # 既定では生成 SBOM のパスを manifest 名にする (README 参照)
+      # manifest 名はロックファイルの実パスにする (Actions からの送信なら Dependency graph に反映される。README 参照)
       - name: Convert to dependency snapshot
         env:
           CORRELATOR: ${{ github.workflow }}_${{ github.job }}
-        run: scripts/cdx2ghsnapshot.sh sbom.cdx.json "${{ inputs.manifestPath || 'sample/sbom.cdx.json' }}" > snapshot.json
+        run: scripts/cdx2ghsnapshot.sh sbom.cdx.json "${{ inputs.manifestPath || 'sample/.terraform.lock.hcl' }}" > snapshot.json
       - name: Submit snapshot
         env:
           GH_TOKEN: ${{ github.token }}

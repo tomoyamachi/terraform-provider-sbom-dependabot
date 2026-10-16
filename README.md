@@ -21,7 +21,7 @@ Terraform コードから Provider / Module の依存関係を SBOM として出
 
 - Trivy / Syft いずれも単体では `.terraform.lock.hcl` の Provider を GitHub 連携可能な SBOM にできない (Trivy は非検出、Syft は検出するが purl 無し)
 - 自前生成した CycloneDX (`scripts/tflock2cdx.sh`) を Dependency submission API に送れば Dependency graph に Provider / Module が表示され、`pkg:golang` purl なら Dependabot alerts も機能する
-- ただし manifest 名に実在の `.terraform.lock.hcl` を使うと依存 0 件に固定される挙動を観測。ワークフローでは生成 SBOM のパスを manifest 名にしている
+- ローカルの `gh api` から送った snapshot は manifest 名 `sample/.terraform.lock.hcl` に限って反映されず、GitHub Actions (`GITHUB_TOKEN`) から送ると反映された。原因は未特定のため、送信は Actions から行う前提にしている
 
 ### Trivy
 
@@ -108,11 +108,15 @@ snapshot の挙動として観測したもの:
 - 同じ `job.correlator` + `job.id` で新しい `scanned` を送ると置き換わる。
 - 異なる `job.correlator` から同じ manifest 名に送ると依存は和集合になる。
 - `manifests: {}` を送っても既存 manifest は消えない。消すには元の correlator から `resolved: {}` を送る (manifest は 0 件として残り、alerts は fixed になる)。
-- **リポジトリに実在する `sample/.terraform.lock.hcl` を manifest 名にすると依存が常に 0 件に固定された。**
-  存在しないパスや `README.md`、`sample/main.tf` を manifest 名にした場合は正常に表示される。
-  GitHub の [対応エコシステム表](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/dependency-graph-supported-package-ecosystems)
-  には OpenTofu (`.terraform.lock.hcl`) が community 維持として載っており、ネイティブ解析がこのパスを占有していると推測される
-  (private リポジトリでは compare API が使えず直接確認はできていない)。
+- 同じ `job.correlator` の新しい snapshot は、manifest 名が異なっていても前の snapshot を丸ごと置き換える
+  (ワークフローから `sample/sbom.cdx.json` → `sample/.terraform.lock.hcl` と送り分けたら前者は消えた)。
+- **ローカルの `gh api` (OAuth トークン) から manifest 名 `sample/.terraform.lock.hcl` に送った snapshot は、
+  correlator / `job.id` / `sha` を変えて 10 回以上試しても依存 0 件のまま反映されなかった。**
+  同じ内容を存在しないパスや `README.md`、`sample/main.tf` に送ると正常に表示され、
+  GitHub Actions の `GITHUB_TOKEN` から同じ manifest 名に送ると 5 件すべて表示された。
+  その後ローカルから別 correlator で同じ manifest 名に追加送信しても反映されない。
+  原因は特定できていない (private リポジトリでは compare API が 404 で、ネイティブ解析の有無を確認できない)。
+  実運用では Actions からの送信を前提にするのが安全。
 - Dependency graph に表示されるのはデフォルトブランチの snapshot のみ。
 
 取り込み結果の確認方法:
