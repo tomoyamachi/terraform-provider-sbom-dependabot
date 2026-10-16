@@ -1,0 +1,39 @@
+# Terraform Provider / Module の依存を GitHub Dependency graph に送信する検証ワークフロー
+name: dependency-submission
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # dependency-graph/snapshots の POST に必要
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      # Provider のバージョンはロックファイルから読めるため init は不要。モジュールだけ取得する
+      - name: Fetch modules
+        run: terraform -chdir=sample get
+      - name: Generate CycloneDX SBOM
+        run: scripts/tflock2cdx.sh sample > sbom.cdx.json
+      # 同じマニフェストパスを複数の correlator で送ると一方に隠されるため、送信は 1 系統に絞る
+      - name: Convert to dependency snapshot
+        run: scripts/cdx2ghsnapshot.sh sbom.cdx.json sample/.terraform.lock.hcl > snapshot.json
+      - name: Submit snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat snapshot.json
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/dependency-graph/snapshots" --input snapshot.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.cdx.json
+            snapshot.json
