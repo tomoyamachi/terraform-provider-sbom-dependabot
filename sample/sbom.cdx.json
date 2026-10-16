@@ -1,0 +1,118 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-16T04:05:07Z",
+    "tools": [
+      {
+        "name": "tflock2cdx",
+        "version": "0.1"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "terraform-root-module",
+      "bom-ref": "root"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/cloudflare/terraform-provider-cloudflare@v4.52.9",
+      "name": "github.com/cloudflare/terraform-provider-cloudflare",
+      "version": "4.52.9",
+      "purl": "pkg:golang/github.com/cloudflare/terraform-provider-cloudflare@v4.52.9",
+      "properties": [
+        {
+          "name": "terraform:provider.source",
+          "value": "registry.terraform.io/cloudflare/cloudflare"
+        },
+        {
+          "name": "terraform:component.kind",
+          "value": "provider"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/hashicorp/terraform-provider-aws@v5.100.0",
+      "name": "github.com/hashicorp/terraform-provider-aws",
+      "version": "5.100.0",
+      "purl": "pkg:golang/github.com/hashicorp/terraform-provider-aws@v5.100.0",
+      "properties": [
+        {
+          "name": "terraform:provider.source",
+          "value": "registry.terraform.io/hashicorp/aws"
+        },
+        {
+          "name": "terraform:component.kind",
+          "value": "provider"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/hashicorp/terraform-provider-null@v3.3.2",
+      "name": "github.com/hashicorp/terraform-provider-null",
+      "version": "3.3.2",
+      "purl": "pkg:golang/github.com/hashicorp/terraform-provider-null@v3.3.2",
+      "properties": [
+        {
+          "name": "terraform:provider.source",
+          "value": "registry.terraform.io/hashicorp/null"
+        },
+        {
+          "name": "terraform:component.kind",
+          "value": "provider"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/hashicorp/terraform-provider-random@v3.6.3",
+      "name": "github.com/hashicorp/terraform-provider-random",
+      "version": "3.6.3",
+      "purl": "pkg:golang/github.com/hashicorp/terraform-provider-random@v3.6.3",
+      "properties": [
+        {
+          "name": "terraform:provider.source",
+          "value": "registry.terraform.io/hashicorp/random"
+        },
+        {
+          "name": "terraform:component.kind",
+          "value": "provider"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/registry.terraform.io/terraform-aws-modules/vpc/aws@5.16.0",
+      "name": "registry.terraform.io/terraform-aws-modules/vpc/aws",
+      "version": "5.16.0",
+      "purl": "pkg:generic/registry.terraform.io%2Fterraform-aws-modules%2Fvpc%2Faws@5.16.0",
+      "properties": [
+        {
+          "name": "terraform:module.key",
+          "value": "vpc"
+        },
+        {
+          "name": "terraform:component.kind",
+          "value": "module"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "root",
+      "dependsOn": [
+        "pkg:golang/github.com/cloudflare/terraform-provider-cloudflare@v4.52.9",
+        "pkg:golang/github.com/hashicorp/terraform-provider-aws@v5.100.0",
+        "pkg:golang/github.com/hashicorp/terraform-provider-null@v3.3.2",
+        "pkg:golang/github.com/hashicorp/terraform-provider-random@v3.6.3",
+        "pkg:generic/registry.terraform.io/terraform-aws-modules/vpc/aws@5.16.0"
+      ]
+    }
+  ]
+}
