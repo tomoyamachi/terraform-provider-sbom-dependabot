@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      manifestPath:
+        description: "snapshot の manifest 名 (Dependency graph 上の表示パス)"
+        default: sample/sbom.cdx.json
+        type: string
 
 permissions:
   contents: write # dependency-graph/snapshots の POST に必要
@@ -22,9 +27,12 @@ jobs:
         run: terraform -chdir=sample get
       - name: Generate CycloneDX SBOM
         run: scripts/tflock2cdx.sh sample > sbom.cdx.json
-      # 同じマニフェストパスを複数の correlator で送ると一方に隠されるため、送信は 1 系統に絞る
+      # manifest 名に実在の .terraform.lock.hcl を使うと GitHub 側で依存 0 件に固定されたため、
+      # 既定では生成 SBOM のパスを manifest 名にする (README 参照)
       - name: Convert to dependency snapshot
-        run: scripts/cdx2ghsnapshot.sh sbom.cdx.json sample/.terraform.lock.hcl > snapshot.json
+        env:
+          CORRELATOR: ${{ github.workflow }}_${{ github.job }}
+        run: scripts/cdx2ghsnapshot.sh sbom.cdx.json "${{ inputs.manifestPath || 'sample/sbom.cdx.json' }}" > snapshot.json
       - name: Submit snapshot
         env:
           GH_TOKEN: ${{ github.token }}
