@@ -130,6 +130,25 @@ gh api repos/OWNER/REPO/dependency-graph/sbom
 gh api repos/OWNER/REPO/dependabot/alerts
 ```
 
+### Dependabot での扱い (まとめ)
+
+**登録はできる。alert も仕組みとしては動くが、実運用で検出されることはほぼ期待できない。**
+
+| 観点 | 結果 |
+|---|---|
+| Dependency graph への登録 | ○ 自前 CycloneDX → snapshot 変換 → submission API で Provider / Module が表示される (Syft / Trivy の出力では不可) |
+| Dependabot alerts の照合 | ○ `pkg:golang` purl なら照合される。aws `v1.13.0` を送ると GHSA-r48h-jr2j-9g78 が open になり、取り除くと fixed になった |
+| 実際に alert が出る見込み | ✗ GitHub Advisory Database に Terraform エコシステムが無く、Go モジュールとして登録された Provider のアドバイザリは aws の 1 件 (`< 1.14.0`) 程度。cloudflare / random / null は 0 件 |
+| Registry モジュール | ✗ `pkg:generic` で載せるしかなく UNKNOWN 表示のみ。照合対象外 |
+| Dependabot security updates (修正 PR) | ✗ `.terraform.lock.hcl` を Go の manifest として扱えないため自動 PR は作られない |
+| Dependabot version updates (更新 PR) | ○ 別機能。`dependabot.yml` の `package-ecosystem: terraform` で Dependency graph と無関係に動く |
+
+用途別の整理:
+
+- Provider のバージョンを GitHub 上で可視化したい → submission API で十分
+- Provider 自体の脆弱性を Dependabot で拾いたい → GHSA 側の登録が無いので穴だらけ。purl-spec に `terraform` 型が入り GHSA が対応するまでは期待できない
+- Provider が内包する Go ライブラリの CVE を見たい → Trivy rootfs / Syft の Go バイナリ解析を別途回す
+
 ## 補足
 
 - Terraform 公式にも Provider SBOM を出力する機能はない。`terraform version -json` / `terraform providers` が唯一の機械可読な出力。
