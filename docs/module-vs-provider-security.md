@@ -41,6 +41,122 @@ Coder レジストリ侵害 (2026-08-31) はこの差が顕在化した事例で
 | Renovate | `required_providers` と lock file 保守 | Registry Module と Git タグ参照 Module |
 | アドバイザリ DB | GHSA / OSV に Terraform エコシステム無し。Go として登録された Provider のアドバイザリが少数 | 無し |
 
+### 1.4 Terraform コード内での呼び出し記述
+
+記述形式によって、バージョン固定の強さと更新ツールの対応範囲が変わる。
+Provider は `required_providers` の 1 形式に収束するが、Module はソースの種類ごとに保証が異なる。
+
+#### Provider
+
+```hcl
+terraform {
+  required_providers {
+    # source は [hostname/]namespace/type。hostname 省略時は registry.terraform.io
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.80"
+    }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.40"
+    }
+    # プライベートレジストリは hostname を明示する
+    internal = {
+      source  = "app.terraform.io/my-org/internal"
+      version = "1.2.0"
+    }
+  }
+}
+
+# provider ブロックは設定のみ。バージョンとソースは required_providers 側で決まる
+provider "aws" {
+  region = "ap-northeast-1"
+}
+```
+
+- `terraform init` で制約を満たすバージョンが選ばれ、`.terraform.lock.hcl` にバージョンとハッシュが記録される。以後は `-upgrade` を付けない限り固定される
+- ロックファイルの `h1:` ハッシュは init を実行したプラットフォーム分しか入らない。CI が別プラットフォームなら `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` で追加する
+- 取得元を社内ミラーに限定する場合は CLI 設定 (`~/.terraformrc`) の `provider_installation` を使う。Registry への直接アクセスを塞げる
+
+```hcl
+# ~/.terraformrc
+provider_installation {
+  network_mirror {
+    url = "https://mirror.example.com/providers/"
+  }
+  direct {
+    exclude = ["registry.terraform.io/*/*"]
+  }
+}
+```
+
+#### Module
+
+```hcl
+# Registry (hostname 省略時は registry.terraform.io)。version 引数はこの形式でのみ有効
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.16.0"
+}
+
+# プライベートレジストリ
+module "vpc_internal" {
+  source  = "app.terraform.io/my-org/vpc/aws"
+  version = "1.2.0"
+}
+
+# Git タグ参照。version 引数は使えず ?ref= で指定する
+module "vpc_tag" {
+  source = "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=v5.16.0"
+}
+
+# Git コミット SHA 参照。完全性を保証できる唯一の形式
+module "vpc_sha" {
+  source = "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=<40 桁のコミット SHA>"
+}
+
+# GitHub 省略形 (git:: と同じ扱い)
+module "vpc_gh" {
+  source = "github.com/terraform-aws-modules/terraform-aws-vpc?ref=v5.16.0"
+}
+
+# サブディレクトリは // で区切る
+module "sub" {
+  source = "git::https://github.com/my-org/terraform-modules.git//modules/bucket?ref=<SHA>"
+}
+
+# SSH 経由
+module "ssh" {
+  source = "git::ssh://git@github.com/my-org/terraform-modules.git?ref=<SHA>"
+}
+
+# HTTP / S3 / GCS アーカイブ。ハッシュ検証は無い
+module "archive" {
+  source = "s3::https://s3-ap-northeast-1.amazonaws.com/my-bucket/vpc-5.16.0.zip"
+}
+
+# ローカルパス。ルートと一緒にバージョン管理される
+module "local_bucket" {
+  source = "./modules/bucket"
+}
+```
+
+- `?ref=` にはブランチ名も書けるが、内容が変わるので固定の用途には使わない
+- Module が内部で `required_providers` を宣言していると、呼び出し側のロックファイルにその Provider が追加される。`terraform providers` で確認する
+- Module に渡す Provider を明示したい場合は `providers = { aws = aws.tokyo }` のようにメタ引数で指定する。Module 側で勝手に Provider 設定が作られる経路を減らせる
+
+#### 記述形式ごとの固定の強さ
+
+| 形式 | `version` 引数 | 固定の強さ | 更新 PR | 備考 |
+|---|---|---|---|---|
+| Registry (`ns/name/provider`) | ○ | 弱。制約を満たす最新版が毎回選ばれ、内容のハッシュ検証も無い | Dependabot / Renovate | 同じバージョン番号で中身が差し替わっても検出できない |
+| Git `?ref=<タグ>` | ✗ | 中。タグが動けば内容が変わる | Renovate (gitTags / githubTags) | 元リポジトリのタグ保護を確認する |
+| Git `?ref=<SHA>` | ✗ | 強。SHA がツリー全体のハッシュになる | 自動更新は限定的。tofulock か手動 | Registry の検索性と SemVer 解決は失う |
+| HTTP / S3 / GCS アーカイブ | ✗ | 無。URL の内容次第 | ✗ | 自前でハッシュを管理する |
+| ローカルパス | ✗ | ルートと同じ履歴で管理 | ✗ | ルートと一緒にレビューする |
+
+Registry 形式の利便性を保ったまま固定の強さを上げたい場合は、2.3 の tofulock かプライベートレジストリを組み合わせる。
+
 要約すると、Provider は「中身は見えないが同一性は保証される」、Module は「中身は見えるが同一性は保証されない」。
 既知脆弱性の照合はどちらも実質的に機能しないため、Module では静的解析と固定、Provider では namespace の確認と HashiCorp bulletin の追跡が中心になる。
 
@@ -68,7 +184,7 @@ Coder レジストリ侵害 (2026-08-31) はこの差が顕在化した事例で
 
 標準機能では保護されない領域で、Module 対策の中で最も優先度が高い。
 
-- Git ソースをコミット SHA で固定する (`source = "git::https://...//path?ref=<sha>"`)。タグ移動や再公開を回避できる唯一の暗号学的保証。Registry の検索性と SemVer 解決は失う
+- Git ソースをコミット SHA で固定する (記述例は 1.4)。タグ移動や再公開を回避できる唯一の暗号学的保証。Registry の検索性と SemVer 解決は失う
 - tofulock (実験段階) で Module 用ロックファイルを作る。Git は SHA、Registry は制約からバージョン、そのバージョンのコミットへ解決して固定し、CI の `verify` でドリフトを検出する。入れ子 Module とアーカイブ形式は対象外で、初回ロック時の内容は信頼する前提
 - プライベートレジストリで審査済み Module を再公開し、利用側はそのカタログだけを参照する。信頼境界を社内に移す
 - 採用前に元リポジトリのリリースタグが保護されているか確認する。タグ保護が無いと `pull_request_target` の悪用 (pwn request) や乗っ取られたメンテナアカウントでタグを動かされる
