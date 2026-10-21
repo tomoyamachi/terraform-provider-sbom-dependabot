@@ -153,3 +153,7 @@ gh api repos/OWNER/REPO/dependabot/alerts
 
 - Terraform 公式にも Provider SBOM を出力する機能はない。`terraform version -json` / `terraform providers` が唯一の機械可読な出力。
 - purl-spec に `terraform` 型が定義されれば Syft の purl 出力と GitHub 側のエコシステム認識が揃う可能性があるが、現時点では `pkg:golang` で Go モジュールとして扱わせるのが唯一 Dependabot と連動する表現。
+
+## 関連ドキュメント
+
+- [Module と Provider の違い、および Module で実施可能なセキュリティ対策](docs/module-vs-provider-security.md): 本検証で手薄だった Module 側の供給元リスクと対策をまとめたもの
